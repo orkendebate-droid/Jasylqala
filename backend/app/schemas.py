@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 ConditionType = Literal["good", "fair", "poor"]
@@ -64,6 +64,19 @@ class TreeCreate(BaseModel):
     photo_url: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=1000)
     is_demo: bool = False
+
+    @field_validator("species")
+    @classmethod
+    def validate_species(cls, v: str) -> str:
+        s = v.strip()
+        if len(s) < 2:
+            raise ValueError("Название вида не может состоять из пробелов")
+        return s
+
+    @field_validator("notes")
+    @classmethod
+    def clean_notes(cls, v: str | None) -> str | None:
+        return v.strip() if v else None
 
 
 class TreeOut(BaseModel):

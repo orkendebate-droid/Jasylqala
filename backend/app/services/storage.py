@@ -21,13 +21,17 @@ def validate_and_read_image(file_bytes: bytes, filename: str | None, max_size_mb
             detail=f"Файл превышает лимит {max_size_mb} МБ",
         )
 
-    ext = Path(filename or "photo.jpg").suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        ext = ".jpg"
-
     try:
         with Image.open(io.BytesIO(file_bytes)) as img:
             img.verify()
+            fmt = (img.format or "").upper()
+            format_map = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
+            if fmt in format_map:
+                ext = format_map[fmt]
+            else:
+                ext = Path(filename or "photo.jpg").suffix.lower()
+                if ext not in ALLOWED_EXTENSIONS:
+                    ext = ".jpg"
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

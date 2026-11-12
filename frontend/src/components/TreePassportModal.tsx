@@ -162,18 +162,30 @@ export function TreePassportModal({
                     </span>
                   </div>
                   {task.notes && <p className="task-notes">{task.notes}</p>}
-                  <div className="task-photos">
-                    {task.photo_before_url && (
-                      <a href={apiUrl(task.photo_before_url)} target="_blank" rel="noreferrer">
-                        Фото до
-                      </a>
-                    )}
-                    {task.photo_after_url && (
-                      <a href={apiUrl(task.photo_after_url)} target="_blank" rel="noreferrer">
-                        Фото после
-                      </a>
-                    )}
-                  </div>
+                  {(task.photo_before_url || task.photo_after_url) && (
+                    <div className="task-photos">
+                      {task.photo_before_url && (
+                        <div className="task-photo-wrap">
+                          <img
+                            src={apiUrl(task.photo_before_url)}
+                            alt="До"
+                            className="task-thumb"
+                          />
+                          <span className="task-photo-label">До</span>
+                        </div>
+                      )}
+                      {task.photo_after_url && (
+                        <div className="task-photo-wrap">
+                          <img
+                            src={apiUrl(task.photo_after_url)}
+                            alt="После"
+                            className="task-thumb"
+                          />
+                          <span className="task-photo-label">После</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {task.status !== "done" && (
                     <div className="task-actions">
                       <label className="btn-secondary btn-sm">

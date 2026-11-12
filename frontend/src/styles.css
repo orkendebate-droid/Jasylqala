@@ -326,6 +326,39 @@ button {
   margin-bottom: 8px;
 }
 
+.task-photo-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.task-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+}
+
+.task-photo-label {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  background: rgba(15, 23, 42, 0.7);
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.photo-preview-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #86efac;
+}
+
 .task-actions {
   display: flex;
   gap: 8px;

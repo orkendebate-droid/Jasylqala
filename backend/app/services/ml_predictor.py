@@ -31,7 +31,8 @@ def extract_image_features(image_bytes: bytes) -> np.ndarray:
     r_mean = float(arr[:, :, 0].mean())
     g_mean = float(arr[:, :, 1].mean())
     b_mean = float(arr[:, :, 2].mean())
-    std_val = float(arr.std())
+    grays = arr.mean(axis=2)
+    std_val = float(grays.std())
     greenness = g_mean - 0.5 * (r_mean + b_mean)
     return np.array([r_mean, g_mean, b_mean, std_val, greenness], dtype=np.float32)
 

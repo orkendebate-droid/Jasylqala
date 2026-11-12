@@ -73,6 +73,7 @@ export async function downloadOfflineBundle(
       } catch {
         // Ignore single tile failure so offline download stays resilient
       }
+      await new Promise((r) => setTimeout(r, 35));
       const pct = 45 + Math.round(((i + 1) / tileUrls.length) * 50);
       onProgress?.({
         stage: "map",

@@ -40,6 +40,9 @@ function getDb(): Promise<IDBPDatabase<JasylqalaDB>> {
           db.createObjectStore("meta");
         }
       },
+    }).catch((err) => {
+      dbPromise = null;
+      throw err;
     });
   }
   return dbPromise;

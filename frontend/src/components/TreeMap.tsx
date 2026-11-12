@@ -85,6 +85,11 @@ export function TreeMap({ trees, onSelectTree }: TreeMapProps) {
         .addTo(map);
       markersRef.current.push(marker);
     });
+
+    return () => {
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+    };
   }, [trees, onSelectTree]);
 
   return <div ref={containerRef} className="map-container" data-testid="tree-map" />;

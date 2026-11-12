@@ -84,6 +84,18 @@ def test_tree_validation_rejects_bad_coords_and_height(client):
     )
     assert bad_condition.status_code == 422
 
+    blank_species = client.post(
+        "/api/trees",
+        json={
+            "species": "    ",
+            "height_m": 4.0,
+            "condition": "good",
+            "latitude": 43.65,
+            "longitude": 51.15,
+        },
+    )
+    assert blank_species.status_code == 422
+
 
 def test_get_missing_tree_returns_404(client):
     resp = client.get("/api/trees/999999")

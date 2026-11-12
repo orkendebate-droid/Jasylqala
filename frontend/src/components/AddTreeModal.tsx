@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Camera, MapPin, Sparkles, X } from "lucide-react";
 import { createTree, predictSpeciesRemote, uploadPhoto } from "../api";
 import { addPendingTree } from "../offline/db";
@@ -26,35 +26,69 @@ export function AddTreeModal({
   const [longitude, setLongitude] = useState("51.1605");
   const [notes, setNotes] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<SpeciesPrediction[]>([]);
   const [predicting, setPredicting] = useState(false);
   const [gpsStatus, setGpsStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
   const handleLocate = () => {
     if (!navigator.geolocation) {
       setGpsStatus("Геолокация не поддерживается браузером");
       return;
     }
-    setGpsStatus("Определяем координаты...");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLatitude(pos.coords.latitude.toFixed(6));
-        setLongitude(pos.coords.longitude.toFixed(6));
-        setGpsStatus(`Точность: ~${Math.round(pos.coords.accuracy)} м`);
-      },
-      () => {
-        setGpsStatus("Не удалось получить GPS (введите координаты вручную)");
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    setGpsStatus("Поиск спутников GPS...");
+
+    const onPos = (pos: GeolocationPosition) => {
+      setLatitude(pos.coords.latitude.toFixed(6));
+      setLongitude(pos.coords.longitude.toFixed(6));
+      setGpsStatus(`Точность: ~${Math.round(pos.coords.accuracy)} м`);
+      setError(null);
+    };
+
+    const onErr = (err: GeolocationPositionError) => {
+      if (err.code === 1) {
+        setGpsStatus("Доступ к геопозиции запрещён в настройках браузера");
+      } else if (err.code === 3) {
+        // High accuracy timed out, retry with standard cell/network location
+        setGpsStatus("Уточняем по сети...");
+        navigator.geolocation.getCurrentPosition(
+          onPos,
+          () => setGpsStatus("Не удалось получить GPS (введите вручную)"),
+          { enableHighAccuracy: false, timeout: 6000 }
+        );
+      } else {
+        setGpsStatus("Сигнал GPS недоступен (введите вручную)");
+      }
+    };
+
+    navigator.geolocation.getCurrentPosition(onPos, onErr, {
+      enableHighAccuracy: true,
+      timeout: 8000,
+      maximumAge: 30000,
+    });
   };
 
   const handlePhotoChange = async (file: File | null) => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
     setPhotoFile(file);
     setPredictions([]);
-    if (!file) return;
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    setPreviewUrl(URL.createObjectURL(file));
 
     setPredicting(true);
     try {
@@ -172,12 +206,15 @@ export function AddTreeModal({
 
         <form className="add-tree-form" onSubmit={handleSubmit}>
           <label className="upload-box">
-            <Camera size={20} />
-            <span>{photoFile ? photoFile.name : "Фото"}</span>
+            {previewUrl ? (
+              <img src={previewUrl} alt="Выбранное фото" className="photo-preview-thumb" />
+            ) : (
+              <Camera size={20} />
+            )}
+            <span>{photoFile ? photoFile.name : "Фото с камеры или галереи"}</span>
             <input
               type="file"
               accept="image/*"
-              capture="environment"
               hidden
               onChange={(e) => handlePhotoChange(e.target.files?.[0] || null)}
             />

@@ -62,6 +62,15 @@ export function App() {
   const loadData = useCallback(async () => {
     try {
       if (isOnline) {
+        // Auto-sync any pending offline trees on startup/refresh
+        const pending = await getPendingTrees();
+        if (pending.length > 0) {
+          const syncRes = await syncPendingTrees();
+          if (syncRes.synced > 0) {
+            showToast(`Синхронизировано: ${syncRes.synced} дер.`);
+          }
+        }
+
         const [fc, species] = await Promise.all([fetchTrees(), fetchSpecies()]);
         const list = fc.features.map((f) => f.properties);
         setTrees(list);
@@ -76,6 +85,7 @@ export function App() {
         setSpeciesCatalog(cachedS);
       }
     } catch {
+      setIsOnline(false);
       const [cachedT, cachedS] = await Promise.all([
         getCachedTrees(),
         getCachedSpecies(),
@@ -85,7 +95,7 @@ export function App() {
     }
     await loadPending();
     setBundleStatus(await getBundleStatus());
-  }, [isOnline, loadPending]);
+  }, [isOnline, loadPending, showToast]);
 
   const handleSyncNow = useCallback(async () => {
     const res = await syncPendingTrees();
@@ -115,7 +125,13 @@ export function App() {
   }, [handleSyncNow]);
 
   const allVisibleTrees = useMemo(() => {
-    return [...pendingTrees, ...trees].filter((t) => {
+    const serverClientIds = new Set(
+      trees.map((t) => t.client_id).filter(Boolean)
+    );
+    const uniquePending = pendingTrees.filter(
+      (p) => !p.client_id || !serverClientIds.has(p.client_id)
+    );
+    return [...uniquePending, ...trees].filter((t) => {
       if (selectedSpecies && t.species !== selectedSpecies) return false;
       if (selectedCondition && t.condition !== selectedCondition) return false;
       return true;
