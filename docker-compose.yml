@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    environment:
+      POSTGRES_USER: jasylqala
+      POSTGRES_PASSWORD: jasylqala_dev_password
+      POSTGRES_DB: jasylqala
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jasylqala -d jasylqala"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://jasylqala:jasylqala_dev_password@db:5432/jasylqala
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads_data:
