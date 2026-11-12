@@ -6,6 +6,9 @@ from app.config import get_settings
 
 
 def normalize_database_url(url: str) -> str:
+    # If placeholder password is still present, fallback to local sqlite safely
+    if "[YOUR-" in url or "[ВАШ" in url or "[ПАРОЛЬ" in url:
+        return "sqlite:///./jasylqala.db"
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+psycopg://", 1)
     if url.startswith("postgresql://") and "+psycopg" not in url:

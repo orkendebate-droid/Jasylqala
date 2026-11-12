@@ -7,8 +7,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import database
 from app.config import Settings, get_settings
-from app.database import SessionLocal, get_db, init_db, sync_postgis_point
+from app.database import get_db, sync_postgis_point
 from app.models import CareTask, Tree
 from app.schemas import (
     CareTaskCreate,
@@ -48,8 +49,8 @@ def _insert_tree(db: Session, payload: TreeCreate) -> tuple[Tree, bool]:
 async def lifespan(_: FastAPI):
     settings = get_settings()
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-    init_db()
-    with SessionLocal() as db:
+    database.init_db()
+    with database.SessionLocal() as db:
         seed_demo_data(db)
     yield
 
