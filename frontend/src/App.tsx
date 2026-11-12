@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CloudDownload, Plus, Trees, Wifi, WifiOff } from "lucide-react";
+import { CheckCircle2, CloudDownload, Plus, Trees, Wifi, WifiOff } from "lucide-react";
 import { fetchSpecies, fetchTreeDetail, fetchTrees } from "./api";
 import { AddTreeModal } from "./components/AddTreeModal";
 import { OfflinePanel } from "./components/OfflinePanel";
@@ -163,12 +163,19 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {/* Top Header / Control HUD */}
       <header className="topbar">
-        <div className="brand">
-          <Trees size={20} />
-          <strong>Jasylqala</strong>
+        <div className="brand" onClick={() => loadData()}>
+          <div className="brand-icon-wrap">
+            <Trees size={22} />
+          </div>
+          <div className="brand-info">
+            <span className="brand-title">Jasylqala</span>
+            <span className="brand-subtitle">Зелёный фонд Актау</span>
+          </div>
         </div>
 
+        {/* Filters */}
         <div className="filters">
           <select
             aria-label="Фильтр по виду"
@@ -188,16 +195,18 @@ export function App() {
             value={selectedCondition}
             onChange={(e) => setSelectedCondition(e.target.value)}
           >
-            <option value="">Состояние</option>
-            <option value="good">Хорошее</option>
-            <option value="fair">Среднее</option>
-            <option value="poor">Слабое</option>
+            <option value="">Все состояния</option>
+            <option value="good">🟢 Хорошее</option>
+            <option value="fair">🟡 Среднее</option>
+            <option value="poor">🔴 Слабое</option>
           </select>
         </div>
 
+        {/* Actions */}
         <div className="topbar-actions">
           <span className={`net-pill ${isOnline ? "online" : "offline"}`}>
-            {isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
+            <span className="pulse-dot" />
+            {isOnline ? <Wifi size={13} /> : <WifiOff size={13} />}
             {isOnline ? "Онлайн" : "Офлайн"}
           </span>
 
@@ -205,6 +214,7 @@ export function App() {
             type="button"
             className={`btn-secondary ${bundleStatus.ready ? "btn-ready" : ""}`}
             onClick={() => setShowOfflinePanel(true)}
+            title="Офлайн карта и база данных"
           >
             <CloudDownload size={16} />
             <span>
@@ -223,12 +233,31 @@ export function App() {
         </div>
       </header>
 
+      {/* Main Map */}
       <main className="map-wrapper">
         <TreeMap trees={allVisibleTrees} onSelectTree={handleSelectTree} />
       </main>
 
-      {toast && <div className="toast">{toast}</div>}
+      {/* Mobile Floating Action Button (FAB) */}
+      <button
+        type="button"
+        className="mobile-fab"
+        onClick={() => setShowAddModal(true)}
+        aria-label="Добавить дерево"
+      >
+        <Plus size={20} />
+        <span>Дерево</span>
+      </button>
 
+      {/* Toast notifications */}
+      {toast && (
+        <div className="toast">
+          <CheckCircle2 size={16} color="#4ade80" />
+          <span>{toast}</span>
+        </div>
+      )}
+
+      {/* Tree Passport Details Modal */}
       {activeTree && (
         <TreePassportModal
           tree={activeTree}
@@ -238,6 +267,7 @@ export function App() {
         />
       )}
 
+      {/* Add Tree Form Modal */}
       {showAddModal && (
         <AddTreeModal
           speciesCatalog={speciesCatalog}
@@ -255,6 +285,7 @@ export function App() {
         />
       )}
 
+      {/* Offline Management Drawer */}
       {showOfflinePanel && (
         <OfflinePanel
           status={bundleStatus}
