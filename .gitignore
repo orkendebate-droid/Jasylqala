@@ -14,3 +14,5 @@ frontend/.vite/
 
 # Env
 .env
+.env.*
+*.env

@@ -46,14 +46,15 @@ async def save_upload(file: UploadFile, settings: Settings) -> str:
     ext = validate_and_read_image(file_bytes, file.filename, settings.max_upload_size_mb)
     object_name = f"{uuid.uuid4().hex}{ext}"
 
-    if settings.supabase_url and settings.supabase_key:
+    supabase_key = settings.effective_supabase_key
+    if settings.supabase_url and supabase_key:
         upload_url = (
             f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
             f"{settings.supabase_bucket}/{object_name}"
         )
         headers = {
-            "Authorization": f"Bearer {settings.supabase_key}",
-            "apikey": settings.supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "apikey": supabase_key,
             "Content-Type": file.content_type or "image/jpeg",
         }
         async with httpx.AsyncClient(timeout=20.0) as client:

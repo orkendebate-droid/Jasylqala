@@ -9,12 +9,17 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 25
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
 
-    # Optional Supabase Storage for persistent photos on Render
+    # Supabase Storage for persistent photos on Render
     supabase_url: str = ""
     supabase_key: str = ""
+    supabase_secret_key: str = ""
     supabase_bucket: str = "tree-photos"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def effective_supabase_key(self) -> str:
+        return self.supabase_key or self.supabase_secret_key
 
     @property
     def cors_origins_list(self) -> list[str]:
