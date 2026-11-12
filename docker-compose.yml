@@ -17,7 +17,8 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://jasylqala:jasylqala_dev_password@db:5432/jasylqala
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000
