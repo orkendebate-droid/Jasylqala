@@ -15,13 +15,64 @@ export function apiUrl(path: string): string {
   return path.startsWith("http") ? path : `${API_BASE}${path}`;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(apiUrl(path), init);
+/**
+ * Сервер недоступен: нет сети, таймаут, сервер спит/упал (5xx).
+ * Отличается от обычной ошибки (4xx), где повторять запрос бессмысленно.
+ * При NetworkError данные нужно класть в офлайн-очередь, а не терять.
+ */
+export class NetworkError extends Error {
+  constructor(message = "Сервер недоступен") {
+    super(message);
+    this.name = "NetworkError";
+  }
+}
+
+export const isNetworkError = (err: unknown): err is NetworkError => err instanceof NetworkError;
+
+export const DEFAULT_TIMEOUT_MS = 15000;
+export const UPLOAD_TIMEOUT_MS = 45000;
+
+/** fetch с таймаутом; сетевые сбои, таймаут и 5xx превращаются в NetworkError. */
+export async function fetchWithTimeout(
+  input: string,
+  init: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let resp: Response;
+  try {
+    resp = await fetch(input, { ...init, signal: controller.signal });
+  } catch {
+    throw new NetworkError(
+      controller.signal.aborted ? "Сервер не ответил вовремя" : "Нет связи с сервером"
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  if (resp.status >= 500) {
+    throw new NetworkError(`Сервер временно недоступен (${resp.status})`);
+  }
+  return resp;
+}
+
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const resp = await fetchWithTimeout(apiUrl(path), init, timeoutMs);
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    throw new Error(err.detail || "Ошибка запроса");
+    throw new Error(typeof err.detail === "string" ? err.detail : "Ошибка запроса");
   }
   return resp.json();
+}
+
+/** Быстрая проверка, что backend жив (Render free может спать). */
+export async function pingServer(timeoutMs = 8000): Promise<boolean> {
+  try {
+    const resp = await fetchWithTimeout(apiUrl("/health"), {}, timeoutMs);
+    return resp.ok;
+  } catch {
+    return false;
+  }
 }
 
 const jsonInit = (method: string, body: unknown): RequestInit => ({
@@ -46,7 +97,11 @@ export const fetchTreeDetail = (treeId: number) =>
 export async function uploadPhoto(file: Blob, filename = "photo.jpg"): Promise<string> {
   const form = new FormData();
   form.append("file", file, filename);
-  const data = await request<{ url: string }>("/api/uploads", { method: "POST", body: form });
+  const data = await request<{ url: string }>(
+    "/api/uploads",
+    { method: "POST", body: form },
+    UPLOAD_TIMEOUT_MS
+  );
   return data.url;
 }
 
@@ -75,9 +130,10 @@ export const updateCareTask = (
 export async function predictSpeciesRemote(file: Blob): Promise<SpeciesPrediction[]> {
   const form = new FormData();
   form.append("file", file, "tree.jpg");
-  const data = await request<{ predictions: SpeciesPrediction[] }>("/api/predict-species", {
-    method: "POST",
-    body: form,
-  });
+  const data = await request<{ predictions: SpeciesPrediction[] }>(
+    "/api/predict-species",
+    { method: "POST", body: form },
+    UPLOAD_TIMEOUT_MS
+  );
   return data.predictions;
 }

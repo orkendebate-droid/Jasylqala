@@ -1,6 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type { OfflineBundleStatus, OfflinePendingTree, SpeciesInfo, Tree } from "../types";
-import { apiUrl, uploadPhoto } from "../api";
+import { UPLOAD_TIMEOUT_MS, apiUrl, fetchWithTimeout, isNetworkError, uploadPhoto } from "../api";
 
 interface JasylqalaDB extends DBSchema {
   pendingTrees: {
@@ -97,7 +97,29 @@ export async function setBundleStatus(status: OfflineBundleStatus): Promise<void
   await db.put("meta", status, "bundle_status");
 }
 
-export async function syncPendingTrees(): Promise<{ synced: number; failed: number }> {
+export interface SyncResult {
+  synced: number;
+  failed: number;
+}
+
+let syncInFlight: Promise<SyncResult> | null = null;
+
+/**
+ * Отправляет офлайн-очередь на сервер.
+ * Повторный вызов во время отправки возвращает тот же промис —
+ * иначе событие `online` и перезагрузка данных запускают две отправки
+ * и фото загружаются дважды.
+ */
+export function syncPendingTrees(): Promise<SyncResult> {
+  if (!syncInFlight) {
+    syncInFlight = doSyncPendingTrees().finally(() => {
+      syncInFlight = null;
+    });
+  }
+  return syncInFlight;
+}
+
+async function doSyncPendingTrees(): Promise<SyncResult> {
   const pending = await getPendingTrees();
   if (pending.length === 0) return { synced: 0, failed: 0 };
 
@@ -117,7 +139,11 @@ export async function syncPendingTrees(): Promise<{ synced: number; failed: numb
         await addPendingTree(item);
       }
       prepared.push({ pendingItem: item, photo_url: photoUrl });
-    } catch {
+    } catch (err) {
+      if (isNetworkError(err)) {
+        // Сервер недоступен — не ждём таймаут на каждом фото, пробуем позже целиком
+        return { synced: 0, failed: pending.length };
+      }
       failed += 1;
     }
   }
@@ -126,23 +152,33 @@ export async function syncPendingTrees(): Promise<{ synced: number; failed: numb
     return { synced: 0, failed };
   }
 
-  const resp = await fetch(apiUrl("/api/offline-sync"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      trees: prepared.map(({ pendingItem, photo_url }) => ({
-        client_id: pendingItem.client_id,
-        species: pendingItem.species,
-        height_m: pendingItem.height_m,
-        condition: pendingItem.condition,
-        latitude: pendingItem.latitude,
-        longitude: pendingItem.longitude,
-        photo_url,
-        notes: pendingItem.notes,
-        is_demo: false,
-      })),
-    }),
-  });
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(
+      apiUrl("/api/offline-sync"),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trees: prepared.map(({ pendingItem, photo_url }) => ({
+            client_id: pendingItem.client_id,
+            species: pendingItem.species,
+            height_m: pendingItem.height_m,
+            condition: pendingItem.condition,
+            latitude: pendingItem.latitude,
+            longitude: pendingItem.longitude,
+            photo_url,
+            notes: pendingItem.notes,
+            is_demo: false,
+          })),
+        }),
+      },
+      UPLOAD_TIMEOUT_MS
+    );
+  } catch {
+    // Сеть/сервер недоступны — очередь остаётся в телефоне до следующей попытки
+    return { synced: 0, failed: pending.length };
+  }
 
   if (!resp.ok) {
     return { synced: 0, failed: pending.length };

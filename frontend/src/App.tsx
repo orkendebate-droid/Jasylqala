@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, CloudDownload, Plus, Trees, Wifi, WifiOff } from "lucide-react";
-import { fetchSpecies, fetchTreeDetail, fetchTrees } from "./api";
+import { fetchSpecies, fetchTreeDetail, fetchTrees, pingServer } from "./api";
 import { AddTreeModal } from "./components/AddTreeModal";
 import { OfflinePanel } from "./components/OfflinePanel";
 import { TreeMap } from "./components/TreeMap";
@@ -16,6 +16,8 @@ import {
 } from "./offline/db";
 import type { OfflineBundleStatus, SpeciesInfo, Tree } from "./types";
 import { pilotStats } from "./pilot";
+
+const SERVER_RETRY_MS = 30000;
 
 export function App() {
   const [isOnline, setIsOnline] = useState(
@@ -110,11 +112,27 @@ export function App() {
     loadData();
   }, [loadData]);
 
+  // Сервер не ответил, хотя браузер считает, что сеть есть (Render проснулся не сразу,
+  // слабый сигнал). Событие `online` в этом случае не придёт, поэтому проверяем сами:
+  // как только сервер ответил — выходим из офлайна, loadData отправит очередь.
   useEffect(() => {
-    const onOnline = () => {
-      setIsOnline(true);
-      handleSyncNow();
+    if (isOnline) return;
+    let cancelled = false;
+    const check = async () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      if ((await pingServer()) && !cancelled) setIsOnline(true);
     };
+    const timer = setInterval(check, SERVER_RETRY_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isOnline]);
+
+  useEffect(() => {
+    // Отдельно handleSyncNow не зовём: смена isOnline перезапускает loadData,
+    // который сам отправляет очередь (иначе две параллельные отправки).
+    const onOnline = () => setIsOnline(true);
     const onOffline = () => setIsOnline(false);
 
     window.addEventListener("online", onOnline);
@@ -123,7 +141,7 @@ export function App() {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
     };
-  }, [handleSyncNow]);
+  }, []);
 
   const allTrees = useMemo(() => {
     const serverClientIds = new Set(
@@ -283,6 +301,9 @@ export function App() {
           onClose={() => setShowAddModal(false)}
           onCreated={async (savedOffline) => {
             setShowAddModal(false);
+            // Сохранили в телефон при «онлайне» → сервер недоступен; уходим в офлайн,
+            // фоновая проверка вернёт онлайн и отправит очередь, когда сервер ответит
+            if (savedOffline) setIsOnline(false);
             await loadData();
             showToast(
               savedOffline

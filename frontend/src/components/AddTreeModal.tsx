@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Check, MapPin, Sparkles, Trash2, X } from "lucide-react";
-import { createTree, predictSpeciesRemote, uploadPhoto } from "../api";
+import { createTree, isNetworkError, predictSpeciesRemote, uploadPhoto } from "../api";
 import { addPendingTree } from "../offline/db";
 import { predictSpeciesOffline } from "../offline/predictor";
 import { compressImage } from "../utils/image";
 import type { ConditionType, SpeciesInfo, SpeciesPrediction, Tree } from "../types";
 import { PILOT, distanceM, findNearbyTree, isInPilot } from "../pilot";
+
+/** Достаточная точность GPS — дальше не ждём */
+const GPS_GOOD_ACCURACY_M = 8;
+/** Хуже этого — предупреждаем: соседние деревья в аллее стоят в 3–5 м */
+const GPS_WARN_ACCURACY_M = 15;
+/** Сколько ждём уточнения от спутников */
+const GPS_WATCH_MS = 20000;
 
 interface AddTreeModalProps {
   speciesCatalog: SpeciesInfo[];
@@ -26,8 +33,16 @@ export function AddTreeModal({
   const [species, setSpecies] = useState(speciesCatalog[0]?.name_ru || "Карагач (Вяз приземистый)");
   const [heightM, setHeightM] = useState("4.5");
   const [condition, setCondition] = useState<ConditionType>("good");
-  const [latitude, setLatitude] = useState("43.6532");
-  const [longitude, setLongitude] = useState("51.1605");
+  // Пусто до получения GPS: раньше здесь стоял центр Актау, и забытый GPS
+  // молча сохранял дерево в центре города
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const [accuracy, setAccuracy] = useState<number | null>(null);
+  const [locating, setLocating] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
+  const watchTimerRef = useRef<number | null>(null);
+  const bestAccuracyRef = useRef(Infinity);
+  const clientIdRef = useRef(`tree-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const [notes, setNotes] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -58,40 +73,81 @@ export function AddTreeModal({
     };
   }, [previewUrl]);
 
-  const handleLocate = () => {
-    if (!navigator.geolocation) {
-      setGpsStatus("Геолокация не поддерживается браузером");
+  // GPS: следим за позицией и оставляем самый точный замер.
+  // Телефон обычно сначала даёт грубую точку (по сети, 50–500 м), потом уточняет по спутникам.
+  const stopWatch = useCallback(() => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation?.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    if (watchTimerRef.current !== null) {
+      clearTimeout(watchTimerRef.current);
+      watchTimerRef.current = null;
+    }
+    setLocating(false);
+  }, []);
+
+  const handleLocate = useCallback(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setGpsStatus("Геолокация не поддерживается браузером — введите координаты вручную");
       return;
     }
+    stopWatch();
+    bestAccuracyRef.current = Infinity;
+    setLocating(true);
     setGpsStatus("Поиск спутников GPS...");
 
-    const onPos = (pos: GeolocationPosition) => {
-      setLatitude(pos.coords.latitude.toFixed(6));
-      setLongitude(pos.coords.longitude.toFixed(6));
-      setGpsStatus(`Точность: ~${Math.round(pos.coords.accuracy)} м`);
-      setError(null);
-    };
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const acc = pos.coords.accuracy;
+        if (acc >= bestAccuracyRef.current) return;
+        bestAccuracyRef.current = acc;
+        setLatitude(pos.coords.latitude.toFixed(6));
+        setLongitude(pos.coords.longitude.toFixed(6));
+        setAccuracy(acc);
+        setError(null);
+        if (acc <= GPS_GOOD_ACCURACY_M) {
+          setGpsStatus(`Точность: ~${Math.round(acc)} м`);
+          stopWatch();
+        } else {
+          setGpsStatus(`Точность: ~${Math.round(acc)} м, уточняем...`);
+        }
+      },
+      (err) => {
+        // Если хоть один замер уже есть — оставляем его
+        if (bestAccuracyRef.current !== Infinity) return;
+        stopWatch();
+        if (err.code === 1) {
+          setGpsStatus("Доступ к геопозиции запрещён в настройках браузера — введите вручную");
+        } else {
+          setGpsStatus("Сигнал GPS недоступен — выйдите на открытое место или введите вручную");
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: GPS_WATCH_MS }
+    );
 
-    const onErr = (err: GeolocationPositionError) => {
-      if (err.code === 1) {
-        setGpsStatus("Доступ к геопозиции запрещён в настройках браузера");
-      } else if (err.code === 3) {
-        setGpsStatus("Уточняем по сети...");
-        navigator.geolocation.getCurrentPosition(
-          onPos,
-          () => setGpsStatus("Не удалось получить GPS (введите вручную)"),
-          { enableHighAccuracy: false, timeout: 6000 }
-        );
-      } else {
-        setGpsStatus("Сигнал GPS недоступен (введите вручную)");
-      }
-    };
+    watchTimerRef.current = window.setTimeout(() => {
+      const best = bestAccuracyRef.current;
+      stopWatch();
+      setGpsStatus(
+        best === Infinity
+          ? "Не удалось получить GPS — введите координаты вручную"
+          : `Точность: ~${Math.round(best)} м`
+      );
+    }, GPS_WATCH_MS);
+  }, [stopWatch]);
 
-    navigator.geolocation.getCurrentPosition(onPos, onErr, {
-      enableHighAccuracy: true,
-      timeout: 8000,
-      maximumAge: 30000,
-    });
+  // Запрашиваем GPS сразу при открытии формы — нельзя полагаться на то, что нажмут кнопку
+  useEffect(() => {
+    handleLocate();
+    return stopWatch;
+  }, [handleLocate, stopWatch]);
+
+  const handleManualCoord = (setter: (v: string) => void, value: string) => {
+    stopWatch();
+    setAccuracy(null);
+    setGpsStatus("Координаты введены вручную");
+    setter(value);
   };
 
   const handlePhotoChange = async (file: File | null) => {
@@ -138,11 +194,13 @@ export function AddTreeModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const lat = Number(latitude);
-    const lon = Number(longitude);
     const h = Number(heightM);
 
-    if (Number.isNaN(lat) || lat < -90 || lat > 90 || Number.isNaN(lon) || lon < -180 || lon > 180) {
+    if (!coordsValid) {
+      setError("Нет координат: дождитесь GPS, нажмите «Найти меня» или введите вручную");
+      return;
+    }
+    if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) {
       setError("Укажите корректные GPS-координаты");
       return;
     }
@@ -153,16 +211,19 @@ export function AddTreeModal({
 
     setBusy(true);
     setError(null);
+    stopWatch();
 
-    const clientId = `tree-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // client_id создаётся один раз на форму: повторное нажатие не создаст дубль на сервере
+    const clientId = clientIdRef.current;
     const processedPhoto = photoFile ? await compressImage(photoFile) : null;
 
-    if (!isOnline) {
+    const saveToPhone = async (uploadedPhotoUrl: string | null) => {
       let photoDataUrl: string | undefined;
-      if (processedPhoto) {
+      if (processedPhoto && !uploadedPhotoUrl) {
         photoDataUrl = await new Promise<string>((resolve) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => resolve("");
           reader.readAsDataURL(processedPhoto);
         });
       }
@@ -171,35 +232,49 @@ export function AddTreeModal({
         species,
         height_m: h,
         condition,
-        latitude: lat,
-        longitude: lon,
+        latitude: latNum,
+        longitude: lonNum,
         notes: notes.trim(),
-        photoBlob: processedPhoto || undefined,
-        photoDataUrl,
+        // Если фото уже успело загрузиться — второй раз не грузим
+        photo_url: uploadedPhotoUrl,
+        photoBlob: uploadedPhotoUrl ? undefined : processedPhoto || undefined,
+        photoDataUrl: uploadedPhotoUrl ? undefined : photoDataUrl,
         created_at: new Date().toISOString(),
       });
-      setBusy(false);
       onCreated(true);
-      return;
-    }
+    };
 
     try {
-      let photoUrl: string | null = null;
-      if (processedPhoto) {
-        photoUrl = await uploadPhoto(processedPhoto, photoFile?.name || "photo.jpg");
+      if (!isOnline) {
+        await saveToPhone(null);
+        return;
       }
-      await createTree({
-        client_id: clientId,
-        species,
-        height_m: h,
-        condition,
-        latitude: lat,
-        longitude: lon,
-        photo_url: photoUrl,
-        notes: notes.trim() || null,
-        is_demo: false,
-      });
-      onCreated(false);
+
+      let photoUrl: string | null = null;
+      try {
+        if (processedPhoto) {
+          photoUrl = await uploadPhoto(processedPhoto, photoFile?.name || "photo.jpg");
+        }
+        await createTree({
+          client_id: clientId,
+          species,
+          height_m: h,
+          condition,
+          latitude: latNum,
+          longitude: lonNum,
+          photo_url: photoUrl,
+          notes: notes.trim() || null,
+          is_demo: false,
+        });
+        onCreated(false);
+      } catch (err) {
+        // Связь пропала или сервер спит — не теряем дерево, кладём в очередь на телефоне
+        if (isNetworkError(err)) {
+          await saveToPhone(photoUrl);
+          return;
+        }
+        throw err;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения");
     } finally {
@@ -425,8 +500,14 @@ export function AddTreeModal({
           <div className="gps-block">
             <div className="gps-header">
               <span>Координаты (GPS)</span>
-              <button type="button" className="btn-secondary btn-sm" onClick={handleLocate}>
-                <MapPin size={14} color="var(--color-primary)" /> Найти меня
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={handleLocate}
+                disabled={locating}
+              >
+                <MapPin size={14} color="var(--color-primary)" />
+                {locating ? "Ищем..." : "Найти меня"}
               </button>
             </div>
             {gpsStatus && (
@@ -439,21 +520,25 @@ export function AddTreeModal({
                 type="number"
                 step="0.000001"
                 value={latitude}
-                onChange={(e) => setLatitude(e.target.value)}
+                onChange={(e) => handleManualCoord(setLatitude, e.target.value)}
                 aria-label="Широта"
                 placeholder="Широта (напр. 43.6532)"
-                required
               />
               <input
                 type="number"
                 step="0.000001"
                 value={longitude}
-                onChange={(e) => setLongitude(e.target.value)}
+                onChange={(e) => handleManualCoord(setLongitude, e.target.value)}
                 aria-label="Долгота"
                 placeholder="Долгота (напр. 51.1605)"
-                required
               />
             </div>
+            {accuracy !== null && accuracy > GPS_WARN_ACCURACY_M && !locating && (
+              <div className="alert-info" data-testid="gps-accuracy-warning">
+                Точность GPS ~{Math.round(accuracy)} м — можно перепутать с соседним деревом.
+                Выйдите из-под крон/от стен и нажмите «Найти меня» ещё раз.
+              </div>
+            )}
             {zoneHint && (
               <span className="muted" style={{ fontSize: 12 }} data-testid="pilot-zone-hint">
                 {zoneHint}

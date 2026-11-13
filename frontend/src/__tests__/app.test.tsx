@@ -1,5 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import * as api from "../api";
 import { predictFromFeatureVector } from "../offline/predictor";
 import { buildAktauTileUrls } from "../offline/bundle";
 import { compressImage } from "../utils/image";
@@ -130,6 +131,11 @@ describe("AddTreeModal Offline Flow", () => {
     vi.restoreAllMocks();
   });
 
+  const fillCoords = () => {
+    fireEvent.change(screen.getByLabelText("Широта"), { target: { value: "43.6515" } });
+    fireEvent.change(screen.getByLabelText("Долгота"), { target: { value: "51.158" } });
+  };
+
   it("saves tree to IndexedDB when offline without network calls", async () => {
     const addSpy = vi.spyOn(offlineDb, "addPendingTree").mockResolvedValue(undefined);
     const onCreated = vi.fn();
@@ -147,12 +153,120 @@ describe("AddTreeModal Offline Flow", () => {
       screen.getByText(/Офлайн: сохранится в телефон/i)
     ).toBeInTheDocument();
 
+    fillCoords();
     fireEvent.click(screen.getByRole("button", { name: /Сохранить/i }));
 
     await waitFor(() => {
       expect(addSpy).toHaveBeenCalledTimes(1);
       expect(onCreated).toHaveBeenCalledWith(true);
     });
+  });
+
+  it("does not save a tree without coordinates (no silent city-centre default)", async () => {
+    const addSpy = vi.spyOn(offlineDb, "addPendingTree").mockResolvedValue(undefined);
+    const onCreated = vi.fn();
+    render(
+      <AddTreeModal speciesCatalog={MOCK_SPECIES} isOnline={false} onClose={vi.fn()} onCreated={onCreated} />
+    );
+
+    expect(screen.getByLabelText("Широта")).toHaveValue(null);
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить/i }));
+
+    expect(await screen.findByText(/Нет координат/i)).toBeInTheDocument();
+    expect(addSpy).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("queues the tree on the phone when the server is unreachable while 'online'", async () => {
+    vi.spyOn(api, "createTree").mockRejectedValue(new api.NetworkError("Нет связи с сервером"));
+    const addSpy = vi.spyOn(offlineDb, "addPendingTree").mockResolvedValue(undefined);
+    const onCreated = vi.fn();
+    render(
+      <AddTreeModal speciesCatalog={MOCK_SPECIES} isOnline={true} onClose={vi.fn()} onCreated={onCreated} />
+    );
+
+    fillCoords();
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить/i }));
+
+    await waitFor(() => {
+      expect(addSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ latitude: 43.6515, longitude: 51.158 })
+      );
+      expect(onCreated).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it("shows a validation error (not a queue) for a 4xx server error", async () => {
+    vi.spyOn(api, "createTree").mockRejectedValue(new Error("Некорректные данные"));
+    const addSpy = vi.spyOn(offlineDb, "addPendingTree").mockResolvedValue(undefined);
+    render(
+      <AddTreeModal speciesCatalog={MOCK_SPECIES} isOnline={true} onClose={vi.fn()} onCreated={vi.fn()} />
+    );
+
+    fillCoords();
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить/i }));
+
+    expect(await screen.findByText("Некорректные данные")).toBeInTheDocument();
+    expect(addSpy).not.toHaveBeenCalled();
+  });
+
+  it("fills coordinates from GPS automatically and keeps the most accurate fix", async () => {
+    let onPos: PositionCallback = () => {};
+    const geo = {
+      watchPosition: vi.fn((cb: PositionCallback) => {
+        onPos = cb;
+        return 1;
+      }),
+      clearWatch: vi.fn(),
+      getCurrentPosition: vi.fn(),
+    };
+    Object.defineProperty(navigator, "geolocation", { value: geo, configurable: true });
+    const fix = (lat: number, lon: number, accuracy: number) =>
+      ({ coords: { latitude: lat, longitude: lon, accuracy } }) as GeolocationPosition;
+
+    render(
+      <AddTreeModal speciesCatalog={MOCK_SPECIES} isOnline={false} onClose={vi.fn()} onCreated={vi.fn()} />
+    );
+    expect(geo.watchPosition).toHaveBeenCalled();
+
+    act(() => onPos(fix(43.6, 51.1, 120)));
+    expect(screen.getByLabelText("Широта")).toHaveValue(43.6);
+
+    act(() => onPos(fix(43.6515, 51.158, 5)));
+    expect(screen.getByLabelText("Широта")).toHaveValue(43.6515);
+    expect(geo.clearWatch).toHaveBeenCalled(); // точность достаточная — перестали ждать
+
+    act(() => onPos(fix(43.7, 51.2, 30))); // хуже — игнорируем
+    expect(screen.getByLabelText("Широта")).toHaveValue(43.6515);
+
+    Object.defineProperty(navigator, "geolocation", { value: undefined, configurable: true });
+  });
+});
+
+describe("fetchWithTimeout", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("turns network failures and 5xx into NetworkError, but not 4xx", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    fetchSpy.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await expect(api.fetchWithTimeout("/x")).rejects.toBeInstanceOf(api.NetworkError);
+
+    fetchSpy.mockResolvedValueOnce(new Response("", { status: 503 }));
+    await expect(api.fetchWithTimeout("/x")).rejects.toBeInstanceOf(api.NetworkError);
+
+    fetchSpy.mockResolvedValueOnce(new Response("{}", { status: 422 }));
+    await expect(api.fetchWithTimeout("/x")).resolves.toHaveProperty("status", 422);
+  });
+
+  it("aborts a hanging request after the timeout", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        })
+    );
+    await expect(api.fetchWithTimeout("/x", {}, 20)).rejects.toThrow(/не ответил/);
   });
 });
 
