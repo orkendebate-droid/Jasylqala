@@ -15,6 +15,7 @@ import {
   syncPendingTrees,
 } from "./offline/db";
 import type { OfflineBundleStatus, SpeciesInfo, Tree } from "./types";
+import { pilotStats } from "./pilot";
 
 export function App() {
   const [isOnline, setIsOnline] = useState(
@@ -124,19 +125,25 @@ export function App() {
     };
   }, [handleSyncNow]);
 
-  const allVisibleTrees = useMemo(() => {
+  const allTrees = useMemo(() => {
     const serverClientIds = new Set(
       trees.map((t) => t.client_id).filter(Boolean)
     );
     const uniquePending = pendingTrees.filter(
       (p) => !p.client_id || !serverClientIds.has(p.client_id)
     );
-    return [...uniquePending, ...trees].filter((t) => {
+    return [...uniquePending, ...trees];
+  }, [pendingTrees, trees]);
+
+  const pilot = useMemo(() => pilotStats(allTrees), [allTrees]);
+
+  const allVisibleTrees = useMemo(() => {
+    return allTrees.filter((t) => {
       if (selectedSpecies && t.species !== selectedSpecies) return false;
       if (selectedCondition && t.condition !== selectedCondition) return false;
       return true;
     });
-  }, [pendingTrees, trees, selectedSpecies, selectedCondition]);
+  }, [allTrees, selectedSpecies, selectedCondition]);
 
   const handleSelectTree = useCallback(
     async (tree: Tree) => {
@@ -235,7 +242,7 @@ export function App() {
 
       {/* Main Map */}
       <main className="map-wrapper">
-        <TreeMap trees={allVisibleTrees} onSelectTree={handleSelectTree} />
+        <TreeMap trees={allVisibleTrees} onSelectTree={handleSelectTree} pilot={pilot} />
       </main>
 
       {/* Mobile Floating Action Button (FAB) */}
@@ -272,6 +279,7 @@ export function App() {
         <AddTreeModal
           speciesCatalog={speciesCatalog}
           isOnline={isOnline}
+          existingTrees={allTrees}
           onClose={() => setShowAddModal(false)}
           onCreated={async (savedOffline) => {
             setShowAddModal(false);

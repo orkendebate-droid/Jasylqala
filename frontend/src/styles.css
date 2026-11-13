@@ -1100,3 +1100,14 @@ button:active {
     grid-template-columns: 1fr;
   }
 }
+
+/* Пилотный квартал */
+.pilot-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 200px;
+}
+.pilot-card .progress-bar {
+  height: 6px;
+}

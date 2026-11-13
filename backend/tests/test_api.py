@@ -234,3 +234,26 @@ def test_seeded_demo_trees_and_filters(client):
     assert len(poor_features) >= 1
     assert all(f["properties"]["condition"] == "poor" for f in poor_features)
 
+
+
+def test_pilot_counts_only_real_trees_inside_quarter(client):
+    inside = {"species": "Карагач (Вяз приземистый)", "height_m": 5, "condition": "poor",
+              "latitude": 43.6515, "longitude": 51.1580, "is_demo": False}
+    outside = {**inside, "latitude": 43.70, "longitude": 51.20}
+    before = client.get("/api/pilot").json()
+    demo_inside = {**inside, "is_demo": True, "condition": "good"}
+    for p in (inside, outside, demo_inside):
+        assert client.post("/api/trees", json=p).status_code == 201
+
+    data = client.get("/api/pilot").json()
+    assert data["target_trees"] == 300
+    assert data["trees_total"] == before["trees_total"] + 2
+    assert data["trees_real"] == before["trees_real"] + 1
+    assert data["by_condition"]["poor"] == before["by_condition"]["poor"] + 1
+    assert data["boundary"]["geometry"]["type"] == "Polygon"
+
+
+def test_point_in_pilot():
+    from app.pilot import point_in_pilot
+    assert point_in_pilot(43.6515, 51.1580)
+    assert not point_in_pilot(43.6600, 51.1580)

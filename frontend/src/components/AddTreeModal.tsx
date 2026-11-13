@@ -1,16 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Camera, Check, MapPin, Sparkles, Trash2, X } from "lucide-react";
 import { createTree, predictSpeciesRemote, uploadPhoto } from "../api";
 import { addPendingTree } from "../offline/db";
 import { predictSpeciesOffline } from "../offline/predictor";
 import { compressImage } from "../utils/image";
-import type { ConditionType, SpeciesInfo, SpeciesPrediction } from "../types";
+import type { ConditionType, SpeciesInfo, SpeciesPrediction, Tree } from "../types";
+import { PILOT, distanceM, findNearbyTree, isInPilot } from "../pilot";
 
 interface AddTreeModalProps {
   speciesCatalog: SpeciesInfo[];
   isOnline: boolean;
   onClose: () => void;
   onCreated: (savedOffline: boolean) => void;
+  /** Уже внесённые деревья — для предупреждения о дубле */
+  existingTrees?: Tree[];
 }
 
 export function AddTreeModal({
@@ -18,6 +21,7 @@ export function AddTreeModal({
   isOnline,
   onClose,
   onCreated,
+  existingTrees = [],
 }: AddTreeModalProps) {
   const [species, setSpecies] = useState(speciesCatalog[0]?.name_ru || "Карагач (Вяз приземистый)");
   const [heightM, setHeightM] = useState("4.5");
@@ -32,6 +36,19 @@ export function AddTreeModal({
   const [gpsStatus, setGpsStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const latNum = Number(latitude);
+  const lonNum = Number(longitude);
+  const coordsValid = latitude !== "" && longitude !== "" && Number.isFinite(latNum) && Number.isFinite(lonNum);
+  const nearby = useMemo(
+    () => (coordsValid ? findNearbyTree(existingTrees, latNum, lonNum, 3) : null),
+    [existingTrees, latNum, lonNum, coordsValid]
+  );
+  const zoneHint = coordsValid
+    ? isInPilot(latNum, lonNum)
+      ? `✓ Внутри пилотного квартала (${PILOT.name})`
+      : `Вне пилотного квартала (${PILOT.name}) — дерево не войдёт в счётчик пилота`
+    : null;
 
   useEffect(() => {
     return () => {
@@ -437,6 +454,17 @@ export function AddTreeModal({
                 required
               />
             </div>
+            {zoneHint && (
+              <span className="muted" style={{ fontSize: 12 }} data-testid="pilot-zone-hint">
+                {zoneHint}
+              </span>
+            )}
+            {nearby && (
+              <div className="alert-error" role="alert" data-testid="duplicate-warning">
+                В {Math.max(1, Math.round(distanceM(Number(latitude), Number(longitude), nearby.latitude, nearby.longitude)))} м уже есть
+                дерево «{nearby.species}». Проверьте, не дубль ли это.
+              </div>
+            )}
           </div>
 
           {/* Notes */}

@@ -26,6 +26,7 @@ from app.schemas import (
     TreeFeatureCollection,
     TreeOut,
 )
+from app.pilot import pilot_summary
 from app.seed import seed_demo_data
 from app.services.ml_predictor import MODEL_VERSION, predict_top3_species
 from app.services.storage import save_upload, validate_and_read_image
@@ -207,6 +208,11 @@ def create_app() -> FastAPI:
             skipped_duplicates=skipped,
             trees=synced_trees,
         )
+
+    @app.get("/api/pilot")
+    def pilot(db: Session = Depends(get_db)) -> dict:
+        """Пилотный квартал: граница (GeoJSON) и прогресс к цели 300 деревьев."""
+        return pilot_summary(db)
 
     @app.get("/api/offline-bundle")
     def offline_bundle(db: Session = Depends(get_db)) -> dict:

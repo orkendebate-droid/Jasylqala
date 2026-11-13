@@ -1,12 +1,15 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Compass } from "lucide-react";
+import { Compass, Target } from "lucide-react";
 import type { Tree } from "../types";
+import { PILOT, PILOT_BOUNDS, type PilotStats } from "../pilot";
 
 interface TreeMapProps {
   trees: Tree[];
   onSelectTree: (tree: Tree) => void;
+  /** Прогресс пилотного квартала (считается по всем деревьям, без учёта фильтров) */
+  pilot?: PilotStats;
 }
 
 const CONDITION_COLORS: Record<string, string> = {
@@ -15,7 +18,7 @@ const CONDITION_COLORS: Record<string, string> = {
   poor: "#dc2626",
 };
 
-export function TreeMap({ trees, onSelectTree }: TreeMapProps) {
+export function TreeMap({ trees, onSelectTree, pilot }: TreeMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
@@ -57,6 +60,28 @@ export function TreeMap({ trees, onSelectTree }: TreeMapProps) {
       "bottom-right"
     );
 
+    map.on("load", () => {
+      map.addSource("pilot", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: { name: PILOT.name },
+          geometry: { type: "Polygon", coordinates: [PILOT.polygon] },
+        },
+      });
+      map.addLayer({
+        id: "pilot-fill",
+        type: "fill",
+        source: "pilot",
+        paint: { "fill-color": "#15803d", "fill-opacity": 0.08 },
+      });
+      map.addLayer({
+        id: "pilot-outline",
+        type: "line",
+        source: "pilot",
+        paint: { "line-color": "#15803d", "line-width": 2.5, "line-dasharray": [2, 1.5] },
+      });
+    });
 
     mapRef.current = map;
 
@@ -103,6 +128,10 @@ export function TreeMap({ trees, onSelectTree }: TreeMapProps) {
     });
   };
 
+  const handleFlyToPilot = () => {
+    mapRef.current?.fitBounds(PILOT_BOUNDS, { padding: 60, maxZoom: 16 });
+  };
+
   return (
     <div className="map-container" data-testid="tree-map">
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
@@ -126,6 +155,23 @@ export function TreeMap({ trees, onSelectTree }: TreeMapProps) {
             <span>Слаб.</span>
           </div>
         </div>
+
+        {pilot && (
+          <div className="map-hud-card pilot-card" data-testid="pilot-progress">
+            <div style={{ display: "flex", justifyContent: "space-between", width: "100%", gap: 8 }}>
+              <strong>Пилот · {PILOT.name}</strong>
+              <span>
+                <strong>{pilot.real}</strong> / {PILOT.target}
+              </span>
+            </div>
+            <div className="progress-bar" aria-label={`Пилот: ${pilot.percent}%`}>
+              <div className="progress-fill" style={{ width: `${pilot.percent}%` }} />
+            </div>
+            {pilot.poor > 0 && (
+              <span style={{ color: "#dc2626" }}>Слабых в квартале: {pilot.poor}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Re-center button */}
@@ -137,6 +183,14 @@ export function TreeMap({ trees, onSelectTree }: TreeMapProps) {
           title="Вернуться к центру Актау"
         >
           <Compass size={16} /> Центр города
+        </button>
+        <button
+          type="button"
+          className="btn-map-control"
+          onClick={handleFlyToPilot}
+          title="Показать пилотный квартал"
+        >
+          <Target size={16} /> Пилот
         </button>
       </div>
     </div>
