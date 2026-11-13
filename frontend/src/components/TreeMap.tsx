@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Compass, Target } from "lucide-react";
 import type { Tree } from "../types";
 import { PILOT, PILOT_BOUNDS, type PilotStats } from "../pilot";
+import { AKTAU_CENTER, OSM_STYLE } from "../mapStyle";
 
 interface TreeMapProps {
   trees: Tree[];
@@ -28,27 +29,10 @@ export function TreeMap({ trees, onSelectTree, pilot }: TreeMapProps) {
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256,
-            maxzoom: 14,
-            attribution: "© OpenStreetMap",
-          },
-        },
-        layers: [
-          {
-            id: "osm-tiles",
-            type: "raster",
-            source: "osm",
-          },
-        ],
-      },
-      center: [51.1605, 43.6532],
+      style: OSM_STYLE,
+      center: AKTAU_CENTER,
       zoom: 13.5,
+      maxZoom: 19,
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "bottom-right");
@@ -122,14 +106,14 @@ export function TreeMap({ trees, onSelectTree, pilot }: TreeMapProps) {
   const handleCenterAktau = () => {
     if (!mapRef.current) return;
     mapRef.current.flyTo({
-      center: [51.1605, 43.6532],
+      center: AKTAU_CENTER,
       zoom: 13.5,
       essential: true,
     });
   };
 
   const handleFlyToPilot = () => {
-    mapRef.current?.fitBounds(PILOT_BOUNDS, { padding: 60, maxZoom: 16 });
+    mapRef.current?.fitBounds(PILOT_BOUNDS, { padding: 60, maxZoom: 17 });
   };
 
   return (

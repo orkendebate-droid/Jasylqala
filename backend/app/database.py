@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -38,6 +38,7 @@ def init_db(target_engine=None) -> None:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
 
     Base.metadata.create_all(bind=eng)
+    _add_missing_columns(eng)
 
     if is_pg:
         with eng.begin() as conn:
@@ -57,6 +58,15 @@ def init_db(target_engine=None) -> None:
                     """
                 )
             )
+
+
+def _add_missing_columns(eng) -> None:
+    """create_all не меняет уже существующие таблицы — новые колонки добавляем вручную."""
+    existing = {c["name"] for c in inspect(eng).get_columns("trees")}
+    if "deleted_at" not in existing:
+        col_type = "TIMESTAMP WITH TIME ZONE" if eng.dialect.name == "postgresql" else "DATETIME"
+        with eng.begin() as conn:
+            conn.execute(text(f"ALTER TABLE trees ADD COLUMN deleted_at {col_type}"))
 
 
 def sync_postgis_point(db: Session, tree_id: int, lat: float, lon: float) -> None:

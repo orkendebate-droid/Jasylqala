@@ -257,3 +257,17 @@ def test_point_in_pilot():
     from app.pilot import point_in_pilot
     assert point_in_pilot(43.6515, 51.1580)
     assert not point_in_pilot(43.6600, 51.1580)
+
+
+def test_pilot_polygon_matches_frontend_copy():
+    """Граница квартала продублирована во frontend — копии не должны расходиться."""
+    import re
+    from pathlib import Path
+
+    from app.pilot import PILOT_NAME, PILOT_POLYGON
+
+    ts = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pilot.ts").read_text(encoding="utf-8")
+    block = ts[ts.index("polygon: [") : ts.index("] as [number, number][]")]
+    pairs = [[float(a), float(b)] for a, b in re.findall(r"\[\s*([\d.]+),\s*([\d.]+)\s*\]", block)]
+    assert pairs == PILOT_POLYGON
+    assert f'name: "{PILOT_NAME}"' in ts

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findNearbyTree, isInPilot, pilotStats } from "../pilot";
+import { duplicateRadiusM, findNearbyTrees, isInPilot, pilotStats } from "../pilot";
 import type { Tree } from "../types";
 
 const tree = (over: Partial<Tree>): Tree => ({
@@ -27,9 +27,25 @@ describe("pilot quarter", () => {
     expect(s.percent).toBe(1);
   });
 
-  it("warns about a tree within 3 m, not 10 m", () => {
-    const existing = [tree({})];
-    expect(findNearbyTree(existing, 43.65151, 51.158)).not.toBeNull(); // ~1 м
-    expect(findNearbyTree(existing, 43.6516, 51.158)).toBeNull(); // ~11 м
+  it("lists possible duplicates within the GPS accuracy radius, nearest first", () => {
+    const existing = [
+      tree({ id: 1 }),
+      tree({ id: 2, latitude: 43.65156 }), // ~7 м
+      tree({ id: 3, latitude: 43.652 }), // ~55 м
+    ];
+    // точка ~1 м от дерева 1
+    const near = findNearbyTrees(existing, 43.65151, 51.158, 5);
+    expect(near.map((n) => n.tree.id)).toEqual([1]);
+
+    const wide = findNearbyTrees(existing, 43.65151, 51.158, 15);
+    expect(wide.map((n) => n.tree.id)).toEqual([1, 2]);
+    expect(wide[0].distance).toBeLessThan(wide[1].distance);
+  });
+
+  it("uses GPS accuracy as the duplicate radius, clamped to 5–20 m", () => {
+    expect(duplicateRadiusM(null)).toBe(5); // точка поставлена на карте
+    expect(duplicateRadiusM(3)).toBe(5);
+    expect(duplicateRadiusM(12)).toBe(12);
+    expect(duplicateRadiusM(80)).toBe(20);
   });
 });

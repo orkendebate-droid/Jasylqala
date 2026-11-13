@@ -117,6 +117,27 @@ export const createTree = (payload: {
   is_demo?: boolean;
 }) => request<Tree>("/api/trees", jsonInit("POST", payload));
 
+export interface TreeUpdatePayload {
+  species?: string;
+  height_m?: number;
+  condition?: ConditionType;
+  latitude?: number;
+  longitude?: number;
+  photo_url?: string | null;
+  notes?: string | null;
+}
+
+export const updateTree = (treeId: number, payload: TreeUpdatePayload) =>
+  request<Tree>(`/api/trees/${treeId}`, jsonInit("PATCH", payload));
+
+export async function deleteTree(treeId: number): Promise<void> {
+  const resp = await fetchWithTimeout(apiUrl(`/api/trees/${treeId}`), { method: "DELETE" });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(typeof err.detail === "string" ? err.detail : "Не удалось удалить дерево");
+  }
+}
+
 export const createCareTask = (
   treeId: number,
   payload: { task_type: TaskType; notes?: string; photo_before_url?: string | null }
@@ -124,7 +145,14 @@ export const createCareTask = (
 
 export const updateCareTask = (
   taskId: number,
-  payload: { status?: TaskStatusType; notes?: string; photo_after_url?: string | null }
+  payload: {
+    status?: TaskStatusType;
+    notes?: string;
+    photo_after_url?: string | null;
+    /** Результат ухода: обновляет паспорт дерева */
+    tree_condition?: ConditionType;
+    tree_height_m?: number;
+  }
 ) => request<CareTask>(`/api/tasks/${taskId}`, jsonInit("PATCH", payload));
 
 export async function predictSpeciesRemote(file: Blob): Promise<SpeciesPrediction[]> {

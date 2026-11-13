@@ -25,12 +25,23 @@ from app.schemas import (
     TreeDetailOut,
     TreeFeatureCollection,
     TreeOut,
+    TreeUpdate,
 )
 from app.pilot import pilot_summary
 from app.seed import seed_demo_data
 from app.services.ml_predictor import MODEL_VERSION, predict_top3_species
 from app.services.storage import save_upload, validate_and_read_image
 from app.species_data import SPECIES_CATALOG
+
+
+CONDITION_LABELS = {"good": "хорошее", "fair": "среднее", "poor": "слабое"}
+
+
+def _get_live_tree(db: Session, tree_id: int) -> Tree:
+    tree = db.query(Tree).filter(Tree.id == tree_id, Tree.deleted_at.is_(None)).first()
+    if not tree:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Дерево не найдено")
+    return tree
 
 
 def _insert_tree(db: Session, payload: TreeCreate) -> tuple[Tree, bool]:
@@ -96,7 +107,7 @@ def create_app() -> FastAPI:
         is_demo: bool | None = Query(default=None),
         db: Session = Depends(get_db),
     ) -> TreeFeatureCollection:
-        query = db.query(Tree)
+        query = db.query(Tree).filter(Tree.deleted_at.is_(None))
         if species:
             query = query.filter(Tree.species == species)
         if condition:
@@ -117,10 +128,37 @@ def create_app() -> FastAPI:
 
     @app.get("/api/trees/{tree_id}", response_model=TreeDetailOut)
     def get_tree(tree_id: int, db: Session = Depends(get_db)) -> TreeDetailOut:
-        tree = db.query(Tree).filter(Tree.id == tree_id).first()
-        if not tree:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Дерево не найдено")
+        return TreeDetailOut.model_validate(_get_live_tree(db, tree_id))
+
+    @app.patch("/api/trees/{tree_id}", response_model=TreeDetailOut)
+    def update_tree(tree_id: int, payload: TreeUpdate, db: Session = Depends(get_db)) -> TreeDetailOut:
+        tree = _get_live_tree(db, tree_id)
+        changes = payload.model_dump(exclude_unset=True)
+        # photo_url/notes можно очистить (null); остальные поля в паспорте обязательны
+        for field in ("species", "height_m", "condition", "latitude", "longitude"):
+            if field in changes and changes[field] is None:
+                del changes[field]
+        if "species" in changes:
+            changes["species"] = changes["species"].strip()
+            if len(changes["species"]) < 2:
+                raise HTTPException(status_code=422, detail="Название вида слишком короткое")
+        if changes.get("notes") is not None:
+            changes["notes"] = changes["notes"].strip() or None
+
+        for field, value in changes.items():
+            setattr(tree, field, value)
+        if "latitude" in changes or "longitude" in changes:
+            sync_postgis_point(db, tree.id, tree.latitude, tree.longitude)
+        db.commit()
+        db.refresh(tree)
         return TreeDetailOut.model_validate(tree)
+
+    @app.delete("/api/trees/{tree_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_tree(tree_id: int, db: Session = Depends(get_db)) -> None:
+        """Мягкое удаление: дерево исчезает с карты и из счётчиков, но остаётся в базе."""
+        tree = _get_live_tree(db, tree_id)
+        tree.deleted_at = datetime.now(timezone.utc)
+        db.commit()
 
     @app.post("/api/trees", response_model=TreeOut, status_code=status.HTTP_201_CREATED)
     def create_tree(payload: TreeCreate, db: Session = Depends(get_db)) -> TreeOut:
@@ -141,9 +179,7 @@ def create_app() -> FastAPI:
     def create_care_task(
         tree_id: int, payload: CareTaskCreate, db: Session = Depends(get_db)
     ) -> CareTaskOut:
-        tree = db.query(Tree).filter(Tree.id == tree_id).first()
-        if not tree:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Дерево не найдено")
+        _get_live_tree(db, tree_id)
 
         task = CareTask(
             tree_id=tree_id,
@@ -176,6 +212,21 @@ def create_app() -> FastAPI:
             task.notes = payload.notes
         if payload.photo_after_url is not None:
             task.photo_after_url = payload.photo_after_url
+
+        # Результат ухода обновляет паспорт; изменение фиксируется в журнале задачи
+        tree = task.tree
+        log: list[str] = []
+        if payload.tree_condition is not None and payload.tree_condition != tree.condition:
+            log.append(
+                f"Состояние: {CONDITION_LABELS.get(tree.condition, tree.condition)} → "
+                f"{CONDITION_LABELS[payload.tree_condition]}"
+            )
+            tree.condition = payload.tree_condition
+        if payload.tree_height_m is not None and payload.tree_height_m != tree.height_m:
+            log.append(f"Высота: {tree.height_m:g} → {payload.tree_height_m:g} м")
+            tree.height_m = payload.tree_height_m
+        if log:
+            task.notes = " · ".join(filter(None, [task.notes, *log]))[:1000]
 
         db.commit()
         db.refresh(task)
@@ -216,7 +267,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/offline-bundle")
     def offline_bundle(db: Session = Depends(get_db)) -> dict:
-        trees = db.query(Tree).order_by(Tree.created_at.desc()).all()
+        trees = db.query(Tree).filter(Tree.deleted_at.is_(None)).order_by(Tree.created_at.desc()).all()
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "species": [

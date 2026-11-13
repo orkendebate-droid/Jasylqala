@@ -12,7 +12,7 @@ DEMO_TREES = [
         "condition": "good",
         "latitude": 43.6512,
         "longitude": 51.1578,
-        "notes": "Демо: 4 мкр, аллея вдоль дороги",
+        "notes": "Демо: 10 мкр, аллея вдоль дороги",
         "is_demo": True,
     },
     {

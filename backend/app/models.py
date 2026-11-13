@@ -23,6 +23,8 @@ class Tree(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    # Мягкое удаление: запись скрывается, но остаётся в базе (можно восстановить)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     tasks: Mapped[list["CareTask"]] = relationship(
         "CareTask", back_populates="tree", cascade="all, delete-orphan", order_by="CareTask.created_at.desc()"

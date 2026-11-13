@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Check, MapPin, Sparkles, Trash2, X } from "lucide-react";
-import { createTree, isNetworkError, predictSpeciesRemote, uploadPhoto } from "../api";
+import { apiUrl, createTree, isNetworkError, predictSpeciesRemote, uploadPhoto } from "../api";
 import { addPendingTree } from "../offline/db";
 import { predictSpeciesOffline } from "../offline/predictor";
 import { compressImage } from "../utils/image";
 import type { ConditionType, SpeciesInfo, SpeciesPrediction, Tree } from "../types";
-import { PILOT, distanceM, findNearbyTree, isInPilot } from "../pilot";
+import { PILOT, duplicateRadiusM, findNearbyTrees, isInPilot } from "../pilot";
+import { LocationPicker } from "./LocationPicker";
 
 /** Достаточная точность GPS — дальше не ждём */
 const GPS_GOOD_ACCURACY_M = 8;
@@ -13,6 +14,8 @@ const GPS_GOOD_ACCURACY_M = 8;
 const GPS_WARN_ACCURACY_M = 15;
 /** Сколько ждём уточнения от спутников */
 const GPS_WATCH_MS = 20000;
+
+const NO_TREES: Tree[] = [];
 
 interface AddTreeModalProps {
   speciesCatalog: SpeciesInfo[];
@@ -28,7 +31,7 @@ export function AddTreeModal({
   isOnline,
   onClose,
   onCreated,
-  existingTrees = [],
+  existingTrees = NO_TREES,
 }: AddTreeModalProps) {
   const [species, setSpecies] = useState(speciesCatalog[0]?.name_ru || "Карагач (Вяз приземистый)");
   const [heightM, setHeightM] = useState("4.5");
@@ -55,9 +58,13 @@ export function AddTreeModal({
   const latNum = Number(latitude);
   const lonNum = Number(longitude);
   const coordsValid = latitude !== "" && longitude !== "" && Number.isFinite(latNum) && Number.isFinite(lonNum);
+  // Радиус поиска дублей = точность GPS (5–20 м); после ручной постановки точки — 5 м
   const nearby = useMemo(
-    () => (coordsValid ? findNearbyTree(existingTrees, latNum, lonNum, 3) : null),
-    [existingTrees, latNum, lonNum, coordsValid]
+    () =>
+      coordsValid
+        ? findNearbyTrees(existingTrees, latNum, lonNum, duplicateRadiusM(accuracy))
+        : [],
+    [existingTrees, latNum, lonNum, coordsValid, accuracy]
   );
   const zoneHint = coordsValid
     ? isInPilot(latNum, lonNum)
@@ -142,6 +149,16 @@ export function AddTreeModal({
     handleLocate();
     return stopWatch;
   }, [handleLocate, stopWatch]);
+
+  // Точку уточнили на карте: это точнее GPS, поэтому поиск спутников останавливаем
+  const handlePickOnMap = (lat: number, lon: number) => {
+    stopWatch();
+    setAccuracy(null);
+    setLatitude(lat.toFixed(6));
+    setLongitude(lon.toFixed(6));
+    setGpsStatus("Точка поставлена на карте");
+    setError(null);
+  };
 
   const handleManualCoord = (setter: (v: string) => void, value: string) => {
     stopWatch();
@@ -533,10 +550,17 @@ export function AddTreeModal({
                 placeholder="Долгота (напр. 51.1605)"
               />
             </div>
+            <LocationPicker
+              lat={coordsValid ? latNum : null}
+              lon={coordsValid ? lonNum : null}
+              accuracy={accuracy}
+              trees={existingTrees}
+              onPick={handlePickOnMap}
+            />
             {accuracy !== null && accuracy > GPS_WARN_ACCURACY_M && !locating && (
               <div className="alert-info" data-testid="gps-accuracy-warning">
                 Точность GPS ~{Math.round(accuracy)} м — можно перепутать с соседним деревом.
-                Выйдите из-под крон/от стен и нажмите «Найти меня» ещё раз.
+                Поправьте метку на карте или выйдите из-под крон и нажмите «Найти меня».
               </div>
             )}
             {zoneHint && (
@@ -544,10 +568,31 @@ export function AddTreeModal({
                 {zoneHint}
               </span>
             )}
-            {nearby && (
-              <div className="alert-error" role="alert" data-testid="duplicate-warning">
-                В {Math.max(1, Math.round(distanceM(Number(latitude), Number(longitude), nearby.latitude, nearby.longitude)))} м уже есть
-                дерево «{nearby.species}». Проверьте, не дубль ли это.
+            {nearby.length > 0 && (
+              <div className="nearby-box" role="alert" data-testid="duplicate-warning">
+                <strong>Рядом уже внесены деревья — это не одно из них?</strong>
+                <ul className="nearby-list">
+                  {nearby.map(({ tree, distance }) => (
+                    <li key={tree.client_id || tree.id} className="nearby-item">
+                      {tree.photo_url ? (
+                        <img
+                          className="nearby-thumb"
+                          src={tree.photo_url.startsWith("data:") ? tree.photo_url : apiUrl(tree.photo_url)}
+                          alt=""
+                        />
+                      ) : (
+                        <span className="nearby-thumb nearby-thumb-empty" />
+                      )}
+                      <span>
+                        {tree.species}, {tree.height_m} м
+                        <span className="muted"> · ~{Math.max(1, Math.round(distance))} м отсюда</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Если это новое дерево — поставьте метку точно на него и сохраняйте.
+                </span>
               </div>
             )}
           </div>

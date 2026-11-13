@@ -1,5 +1,6 @@
 import { apiUrl } from "../api";
 import type { OfflineBundleStatus, OfflinePart, SpeciesInfo, Tree } from "../types";
+import { PILOT_BOUNDS } from "../pilot";
 import { getBundleStatus, saveCachedSpecies, saveCachedTrees, setBundleStatus } from "./db";
 
 export interface BundleProgress {
@@ -26,11 +27,18 @@ function latLonToTile(lat: number, lon: number, zoom: number): { x: number; y: n
   return { x, y };
 }
 
-export function buildAktauTileUrls(zooms: number[] = [13, 14]): string[] {
+interface Bounds {
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+}
+
+function buildTileUrls(bounds: Bounds, zooms: number[]): string[] {
   const urls: string[] = [];
   for (const z of zooms) {
-    const topLeft = latLonToTile(AKTAU_BOUNDS.maxLat, AKTAU_BOUNDS.minLon, z);
-    const bottomRight = latLonToTile(AKTAU_BOUNDS.minLat, AKTAU_BOUNDS.maxLon, z);
+    const topLeft = latLonToTile(bounds.maxLat, bounds.minLon, z);
+    const bottomRight = latLonToTile(bounds.minLat, bounds.maxLon, z);
     for (let x = topLeft.x; x <= bottomRight.x; x++) {
       for (let y = topLeft.y; y <= bottomRight.y; y++) {
         urls.push(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`);
@@ -38,6 +46,34 @@ export function buildAktauTileUrls(zooms: number[] = [13, 14]): string[] {
     }
   }
   return urls;
+}
+
+/** Обзорная карта всего города (масштабы 13–14). */
+export function buildAktauTileUrls(zooms: number[] = [13, 14]): string[] {
+  return buildTileUrls(AKTAU_BOUNDS, zooms);
+}
+
+/**
+ * Подробная карта только пилотного квартала (масштабы 15–18) с запасом ~100 м по краям.
+ * На 13–14 один тайл — это ~2 км, отдельные деревья не различить; на 17–18 видно дворы и аллеи.
+ * Квартал маленький, поэтому это всего около сотни тайлов.
+ */
+export function buildPilotTileUrls(zooms: number[] = [15, 16, 17, 18]): string[] {
+  const pad = 0.001;
+  return buildTileUrls(
+    {
+      minLon: PILOT_BOUNDS[0][0] - pad,
+      minLat: PILOT_BOUNDS[0][1] - pad,
+      maxLon: PILOT_BOUNDS[1][0] + pad,
+      maxLat: PILOT_BOUNDS[1][1] + pad,
+    },
+    zooms
+  );
+}
+
+/** Всё, что скачивает кнопка «Карта Актау». */
+export function buildOfflineTileUrls(): string[] {
+  return [...buildAktauTileUrls([13, 14]), ...buildPilotTileUrls()];
 }
 
 export const ALL_PARTS: OfflinePart[] = ["data", "model", "map"];
@@ -69,7 +105,7 @@ async function fetchModel(onProgress?: Progress): Promise<void> {
 }
 
 async function fetchMap(onProgress?: Progress): Promise<number> {
-  const tileUrls = buildAktauTileUrls([13, 14]);
+  const tileUrls = buildOfflineTileUrls();
   let cachedTiles = 0;
   if (typeof caches !== "undefined") {
     const tileCache = await caches.open("aktau-map-tiles");
@@ -87,7 +123,7 @@ async function fetchMap(onProgress?: Progress): Promise<number> {
       onProgress?.({
         stage: "map",
         percent: Math.round(((i + 1) / tileUrls.length) * 100),
-        message: `Карта Актау: ${i + 1} из ${tileUrls.length} фрагментов`,
+        message: `Карта: ${i + 1} из ${tileUrls.length} фрагментов`,
       });
     }
   }

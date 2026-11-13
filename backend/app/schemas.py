@@ -38,6 +38,9 @@ class CareTaskUpdate(BaseModel):
     status: TaskStatusType | None = None
     notes: str | None = Field(default=None, max_length=1000)
     photo_after_url: str | None = Field(default=None, max_length=500)
+    # Результат ухода/осмотра: обновляет паспорт дерева при закрытии задачи
+    tree_condition: ConditionType | None = None
+    tree_height_m: float | None = Field(default=None, gt=0.0, le=100.0)
 
 
 class CareTaskOut(BaseModel):
@@ -77,6 +80,18 @@ class TreeCreate(BaseModel):
     @classmethod
     def clean_notes(cls, v: str | None) -> str | None:
         return v.strip() if v else None
+
+
+class TreeUpdate(BaseModel):
+    """Исправление паспорта. Передаются только изменяемые поля."""
+
+    species: str | None = Field(default=None, min_length=2, max_length=120)
+    height_m: float | None = Field(default=None, gt=0.0, le=100.0)
+    condition: ConditionType | None = None
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+    photo_url: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=1000)
 
 
 class TreeOut(BaseModel):

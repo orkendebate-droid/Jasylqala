@@ -178,6 +178,12 @@ export function App() {
     [isOnline]
   );
 
+  // Соседи активного дерева — для карты переноса точки
+  const otherTrees = useMemo(
+    () => (activeTree ? allTrees.filter((t) => t.id !== activeTree.id) : allTrees),
+    [allTrees, activeTree]
+  );
+
   const handleTreeUpdated = async (treeId: number) => {
     await loadData();
     if (treeId > 0 && isOnline) {
@@ -289,6 +295,13 @@ export function App() {
           isOnline={isOnline}
           onClose={() => setActiveTree(null)}
           onUpdated={handleTreeUpdated}
+          onDeleted={async () => {
+            setActiveTree(null);
+            await loadData();
+            showToast("Дерево удалено с карты");
+          }}
+          speciesCatalog={speciesCatalog}
+          otherTrees={otherTrees}
         />
       )}
 
