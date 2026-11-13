@@ -191,6 +191,30 @@ describe("OfflinePanel", () => {
     });
   });
 
+  it("downloads a single part separately", async () => {
+    const onStatusChange = vi.fn();
+    const spy = vi.spyOn(offlineBundle, "downloadOfflinePart").mockResolvedValue({
+      ready: true,
+      downloadedAt: null,
+      treesCount: 0,
+      tilesCount: 0,
+      parts: { data: false, model: true, map: false },
+    });
+    render(
+      <OfflinePanel
+        status={{ ready: false, downloadedAt: null, treesCount: 0, tilesCount: 0 }}
+        pendingCount={0}
+        isOnline={true}
+        onClose={vi.fn()}
+        onStatusChange={onStatusChange}
+        onSyncNow={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Скачать: Нейросеть/i }));
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledWith("model", expect.any(Function));
+  });
+
   it("closes on backdrop click", () => {
     const onClose = vi.fn();
     render(

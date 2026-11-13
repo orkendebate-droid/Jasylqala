@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { CheckCircle2, CloudDownload, Database, HardDrive, Layers, RefreshCw, X } from "lucide-react";
-import { downloadOfflineBundle, type BundleProgress } from "../offline/bundle";
-import type { OfflineBundleStatus } from "../types";
+import { CheckCircle2, CloudDownload, Smartphone, Database, HardDrive, Layers, RefreshCw, X } from "lucide-react";
+import { downloadOfflineBundle, downloadOfflinePart, getParts, type BundleProgress } from "../offline/bundle";
+import type { OfflineBundleStatus, OfflinePart } from "../types";
+import { useInstallApp } from "../utils/install";
 
 interface OfflinePanelProps {
   status: OfflineBundleStatus;
@@ -24,6 +25,7 @@ export function OfflinePanel({
   const [syncing, setSyncing] = useState(false);
   const [progress, setProgress] = useState<BundleProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { installed, canInstall, ios, install } = useInstallApp();
 
   const handleDownload = async () => {
     if (!isOnline) {
@@ -41,6 +43,29 @@ export function OfflinePanel({
       setDownloading(false);
     }
   };
+
+  const handlePart = async (part: OfflinePart) => {
+    if (!isOnline) {
+      setError("Для скачивания нужен интернет");
+      return;
+    }
+    setDownloading(true);
+    setError(null);
+    try {
+      onStatusChange(await downloadOfflinePart(part, (p) => setProgress(p)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка скачивания");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const parts = getParts(status);
+  const partRows: Array<{ id: OfflinePart; title: string; hint: string; icon: typeof Layers }> = [
+    { id: "data", title: "База деревьев", hint: `${status.treesCount} паспортов · лёгкая`, icon: Database },
+    { id: "model", title: "Нейросеть", hint: "определение вида без интернета", icon: HardDrive },
+    { id: "map", title: "Карта Актау", hint: `${status.tilesCount} фрагментов · самая тяжёлая`, icon: Layers },
+  ];
 
   const handleSync = async () => {
     setSyncing(true);
@@ -76,40 +101,61 @@ export function OfflinePanel({
         </div>
 
         <p className="muted" style={{ marginTop: 0 }}>
-          Офлайн-пакет сохраняет векторные тайлы карты Актау, веса нейросети и базу деревьев в память браузера (Cache Storage & IndexedDB).
+          Сначала установите приложение, затем при необходимости докачайте тяжёлые части по отдельности: базу деревьев, нейросеть и карту Актау.
         </p>
 
-        {/* Offline Status Card */}
-        <div className="offline-status-card">
-          {status.ready ? (
-            <div className="status-ok">
-              <CheckCircle2 size={24} color="#059669" />
-              <div>
-                <strong style={{ color: "#065f46" }}>Офлайн-пакет готов к работе</strong>
-                <div className="muted" style={{ fontSize: 12, marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    <Layers size={13} /> {status.tilesCount} тайлов OSM
-                  </span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    <Database size={13} /> {status.treesCount} паспортов
-                  </span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    <HardDrive size={13} /> Нейросеть активна
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="status-empty">
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <CloudDownload size={20} color="var(--color-primary)" />
-                <strong>Пакет ещё не загружен</strong>
-              </div>
+        {/* Install App */}
+        <div className="offline-status-card" data-testid="install-card">
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Smartphone size={20} color="var(--color-primary)" />
+            <strong>{installed ? "Приложение установлено" : "Установить приложение"}</strong>
+          </div>
+          {!installed && (
+            <>
               <span className="muted" style={{ fontSize: 12 }}>
-                Скачайте данные для работы без интернета на выезде в Актау
+                Установка на устройство даёт запуск с главного экрана и работу без браузера, в том числе без интернета.
               </span>
-            </div>
+              {canInstall ? (
+                <button type="button" className="btn-secondary" onClick={() => void install()}>
+                  <Smartphone size={14} /> Установить
+                </button>
+              ) : ios ? (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  iPhone/iPad: нажмите «Поделиться» → «На экран Домой».
+                </span>
+              ) : (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Если кнопки нет: меню браузера → «Установить приложение» / «Добавить на главный экран».
+                </span>
+              )}
+            </>
           )}
+        </div>
+
+        {/* Тяжёлые части скачиваются отдельно */}
+        <div className="offline-status-card" data-testid="offline-parts">
+          {partRows.map(({ id, title, hint, icon: Icon }) => (
+            <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+              <Icon size={18} color="var(--color-primary)" />
+              <div style={{ flex: 1 }}>
+                <strong>{title}</strong>
+                <div className="muted" style={{ fontSize: 12 }}>{hint}</div>
+              </div>
+              {parts[id] ? (
+                <CheckCircle2 size={20} color="#059669" aria-label={`${title}: скачано`} />
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={downloading || !isOnline}
+                  onClick={() => void handlePart(id)}
+                  aria-label={`Скачать: ${title}`}
+                >
+                  <CloudDownload size={14} /> Скачать
+                </button>
+              )}
+            </div>
+          ))}
         </div>
 
         {/* Progress Bar */}
@@ -135,7 +181,7 @@ export function OfflinePanel({
           onClick={handleDownload}
         >
           <CloudDownload size={18} />
-          {downloading ? "Загрузка пакета..." : status.ready ? "Обновить офлайн-пакет" : "Скачать офлайн"}
+          {downloading ? "Загрузка..." : status.ready ? "Обновить всё" : "Скачать офлайн"}
         </button>
 
         {/* Pending Sync Section */}

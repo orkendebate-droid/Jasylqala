@@ -68,8 +68,13 @@ export interface OfflinePendingTree {
   created_at: string;
 }
 
+export type OfflinePart = "data" | "model" | "map";
+
 export interface OfflineBundleStatus {
+  /** true, когда скачана хотя бы одна часть */
   ready: boolean;
+  /** Какие тяжёлые части уже на устройстве. Если поля нет (старые данные) — считаем, что скачано всё. */
+  parts?: Record<OfflinePart, boolean>;
   downloadedAt: string | null;
   treesCount: number;
   tilesCount: number;

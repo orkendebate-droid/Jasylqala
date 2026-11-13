@@ -1,12 +1,14 @@
 import { apiUrl } from "../api";
-import type { OfflineBundleStatus, SpeciesInfo, Tree } from "../types";
-import { saveCachedSpecies, saveCachedTrees, setBundleStatus } from "./db";
+import type { OfflineBundleStatus, OfflinePart, SpeciesInfo, Tree } from "../types";
+import { getBundleStatus, saveCachedSpecies, saveCachedTrees, setBundleStatus } from "./db";
 
 export interface BundleProgress {
-  stage: "data" | "model" | "map" | "done";
+  stage: OfflinePart | "done";
   percent: number;
   message: string;
 }
+
+type Progress = (progress: BundleProgress) => void;
 
 // Aktau bounding box for offline map tiles (zoom 13–14)
 const AKTAU_BOUNDS = {
@@ -38,11 +40,16 @@ export function buildAktauTileUrls(zooms: number[] = [13, 14]): string[] {
   return urls;
 }
 
-export async function downloadOfflineBundle(
-  onProgress?: (progress: BundleProgress) => void
-): Promise<OfflineBundleStatus> {
-  onProgress?.({ stage: "data", percent: 10, message: "Скачиваем паспорта деревьев и виды..." });
+export const ALL_PARTS: OfflinePart[] = ["data", "model", "map"];
 
+/** Какие части скачаны. Старый статус без `parts` трактуем как «скачано всё». */
+export function getParts(status: OfflineBundleStatus): Record<OfflinePart, boolean> {
+  if (status.parts) return status.parts;
+  return { data: status.ready, model: status.ready, map: status.ready };
+}
+
+async function fetchData(onProgress?: Progress): Promise<number> {
+  onProgress?.({ stage: "data", percent: 10, message: "Скачиваем паспорта деревьев и виды..." });
   const resp = await fetch(apiUrl("/api/offline-bundle"));
   if (!resp.ok) {
     throw new Error("Не удалось скачать данные с сервера");
@@ -50,17 +57,20 @@ export async function downloadOfflineBundle(
   const bundle: { species: SpeciesInfo[]; trees: Tree[] } = await resp.json();
   await saveCachedSpecies(bundle.species);
   await saveCachedTrees(bundle.trees);
+  return bundle.trees.length;
+}
 
-  onProgress?.({ stage: "model", percent: 30, message: "Сохраняем нейросеть для офлайна..." });
+async function fetchModel(onProgress?: Progress): Promise<void> {
+  onProgress?.({ stage: "model", percent: 50, message: "Сохраняем нейросеть для офлайна..." });
   if (typeof caches !== "undefined") {
     const modelCache = await caches.open("jasylqala-ml-model");
     await modelCache.add("/models/species_weights.json");
   }
+}
 
-  onProgress?.({ stage: "map", percent: 45, message: "Кешируем карту Актау..." });
+async function fetchMap(onProgress?: Progress): Promise<number> {
   const tileUrls = buildAktauTileUrls([13, 14]);
   let cachedTiles = 0;
-
   if (typeof caches !== "undefined") {
     const tileCache = await caches.open("aktau-map-tiles");
     for (let i = 0; i < tileUrls.length; i++) {
@@ -74,22 +84,42 @@ export async function downloadOfflineBundle(
         // Ignore single tile failure so offline download stays resilient
       }
       await new Promise((r) => setTimeout(r, 35));
-      const pct = 45 + Math.round(((i + 1) / tileUrls.length) * 50);
       onProgress?.({
         stage: "map",
-        percent: pct,
+        percent: Math.round(((i + 1) / tileUrls.length) * 100),
         message: `Карта Актау: ${i + 1} из ${tileUrls.length} фрагментов`,
       });
     }
   }
+  return cachedTiles;
+}
 
-  const status: OfflineBundleStatus = {
-    ready: true,
-    downloadedAt: new Date().toISOString(),
-    treesCount: bundle.trees.length,
-    tilesCount: cachedTiles,
-  };
-  await setBundleStatus(status);
+/** Скачивает одну часть офлайн-пакета и сохраняет статус. Остальные части не трогает. */
+export async function downloadOfflinePart(
+  part: OfflinePart,
+  onProgress?: Progress
+): Promise<OfflineBundleStatus> {
+  const prev = await getBundleStatus();
+  const next: OfflineBundleStatus = { ...prev, parts: { ...getParts(prev) } };
+
+  if (part === "data") next.treesCount = await fetchData(onProgress);
+  else if (part === "model") await fetchModel(onProgress);
+  else next.tilesCount = await fetchMap(onProgress);
+
+  next.parts![part] = true;
+  next.ready = true;
+  next.downloadedAt = new Date().toISOString();
+  await setBundleStatus(next);
+  onProgress?.({ stage: "done", percent: 100, message: "Готово!" });
+  return next;
+}
+
+/** Скачивает всё сразу: данные, нейросеть, карту. */
+export async function downloadOfflineBundle(onProgress?: Progress): Promise<OfflineBundleStatus> {
+  let status = await getBundleStatus();
+  for (const part of ALL_PARTS) {
+    status = await downloadOfflinePart(part, onProgress);
+  }
   onProgress?.({ stage: "done", percent: 100, message: "Офлайн-режим готов!" });
   return status;
 }
